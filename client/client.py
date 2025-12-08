@@ -1,19 +1,22 @@
 import socket
 import time
+import os
 
-SERVER_HOST = "server"
-SERVER_PORT = 9000
+PROXY_HOST = os.environ.get("PROXY_HOST", "proxy")
+PROXY_PORT = int(os.environ.get("PROXY_PORT", "8000"))
 
 
 def main():
-    time.sleep(2)  # wait a bit for proxy & server to start
+    time.sleep(5)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((SERVER_HOST, SERVER_PORT))
-        msg = b"Hello from client\n"
-        print(f"[CLIENT] Sending: {msg!r}")
-        s.sendall(msg)
-        data = s.recv(4096)
-        print(f"[CLIENT] Received: {data!r}")
+        s.connect((PROXY_HOST, PROXY_PORT))
+        print(f"[client] Connected to proxy at {PROXY_HOST}:{PROXY_PORT}")
+        s.sendall(b"hello from client!\n")
+        resp = s.recv(4096)
+        if not resp == None:
+            print(f"[client] Got response: {resp!r}")
+        else:
+            print(f"Didnt get anything back")
 
 
 if __name__ == "__main__":

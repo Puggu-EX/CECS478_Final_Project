@@ -1,28 +1,25 @@
 version: "3.9"
 
 services:
-  proxy:
-    build: ./proxy
-    container_name: proxy
-    ports:
-      - "8080:8080" # expose proxy to host (simulating VPS public port)
-    networks:
-      - labnet
-
   server:
     build: ./server
-    container_name: server
-    networks:
-      - labnet
+    container_name: fp_server
+
+  proxy:
+    build: ./proxy
+    container_name: fp_proxy
+    depends_on:
+      - server
+    environment:
+      - LISTEN_PORT=8000
+      - UPSTREAM_HOST=server
+      - UPSTREAM_PORT=9000
 
   client:
     build: ./client
-    container_name: client
-    networks:
-      - labnet
+    container_name: fp_client
     depends_on:
       - proxy
-
-networks:
-  labnet:
-    driver: bridge
+    environment:
+      - PROXY_HOST=proxy
+      - PROXY_PORT=8000
