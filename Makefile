@@ -1,6 +1,6 @@
 up:
 	docker-compose build
 
-build:
+demo:
 	docker-compose up
 
