@@ -1,6 +1,6 @@
 up:
-	docker-compose up
+	docker-compose build
 
 build:
-	docker-compose build
+	docker-compose up
 

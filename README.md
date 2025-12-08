@@ -10,14 +10,14 @@ Make sure:
 - You're in the project folder; same directory as `docker-compose.yml`
 - Have `make` installed
 
-### To run
+### To build
 ```
 make up
 ```
 
-### To build
+### To run
 ```
-make build
+make demo
 ```
 
 **Note:** `make up` also builds the project via `docker-compose up --build`
