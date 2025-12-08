@@ -6,10 +6,22 @@ The goal of this project was to demonstrate the use of a reverse proxy to harden
 Make sure docker is installed with the ability to run docker-compose. That should be the only requirement.
 
 ## Building and Run
-**Make sure you're in the project folder; same directory as docker-compose.yml**  
+Make sure: 
+- You're in the project folder; same directory as `docker-compose.yml`
+- Have `make` installed
+
+### To run
 ```
-docker-compose up --build
+make up
 ```
+
+### To build
+```
+make build
+```
+
+**Note:** `make up` also builds the project via `docker-compose up --build`
+
 ## Architecture Overview
 ![Architecture](assets/architecture.png)  
 
