@@ -1,11 +1,34 @@
 import socket
 import threading
-import os
+import time
 
 LISTEN_HOST = "0.0.0.0"
-LISTEN_PORT = int(os.environ.get("PROXY_PORT", "8000"))
-TARGET_HOST = os.environ.get("TARGET_HOST", "server")  # docker service name
-TARGET_PORT = int(os.environ.get("TARGET_PORT", "9000"))
+LISTEN_PORT = 8000
+TARGET_HOST = "server"
+TARGET_PORT = 9000
+
+
+LOG_FILE = "/logs/log.txt"
+
+_log_lock = threading.Lock()
+
+
+def log_packet(label: str, data: bytes):
+    if label == "s->c" or len(data) <= 50:
+        return False
+
+    try:
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        new_line = f"{current_time} [{label}] len={len(data)} data={data!r}\n"
+
+        with _log_lock:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(new_line)
+                print("Logged a packet!")
+                return True
+    except Exception as e:
+        print("Failed to log packet :(")
+        print(e)
 
 
 def pipe(src, dst, label):
@@ -15,8 +38,14 @@ def pipe(src, dst, label):
             if not data:
                 # remote side closed
                 break
+
+            logged = log_packet(label, data)
+            if logged:
+                raise ValueError
+
             dst.sendall(data)
-    except (ConnectionResetError, OSError) as e:
+
+    except (ConnectionResetError, OSError, ValueError) as e:
         print(f"[proxy] {label} pipe closed: {e}")
     finally:
         try:

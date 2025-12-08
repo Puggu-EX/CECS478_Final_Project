@@ -18,8 +18,7 @@ def handle_client(conn, addr):
             text = data.decode().strip()
             print(f"[server] Received raw data: {text!r}", flush=True)
 
-            value = int(text)
-            response = f"[server] got {value}"
+            response = f"[server] got {text}"
 
             print(f"[server] Sending response: {response!r}", flush=True)
             conn.sendall(response.encode())

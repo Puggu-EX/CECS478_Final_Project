@@ -1,0 +1,1 @@
+2025-12-08 11:07:05 [c->s] len=58 data=b'This is a malicous message! You can tell by the odd size!\n'
