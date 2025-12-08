@@ -14,11 +14,15 @@ Make sure:
 ```
 make up
 ```
-
 ### To run
 ```
 make demo
 ```
+### To build & run
+```
+make up && make demo
+```
+
 
 **Note:** `make up` also builds the project via `docker-compose up --build`
 
