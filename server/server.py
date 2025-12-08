@@ -1,5 +1,6 @@
 import socket
 import os
+import time
 
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("SERVER_PORT", "9000"))  # match whatever proxy connects to
@@ -11,7 +12,6 @@ def handle_client(conn, addr):
         while True:
             data = conn.recv(4096)
             if not data:
-                # b"" means the other side closed the connection
                 print("[server] Client closed connection", flush=True)
                 break
 
@@ -19,7 +19,7 @@ def handle_client(conn, addr):
             print(f"[server] Received raw data: {text!r}", flush=True)
 
             value = int(text)
-            response = f"[server] got {value}\n"
+            response = f"[server] got {value}"
 
             print(f"[server] Sending response: {response!r}", flush=True)
             conn.sendall(response.encode())
@@ -35,6 +35,7 @@ def main():
 
         while True:
             conn, addr = s.accept()
+            time.sleep(1)
             handle_client(conn, addr)
 
 
