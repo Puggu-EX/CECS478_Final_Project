@@ -38,7 +38,6 @@ def handle_client(client_sock, client_addr):
     upstream.connect((TARGET_HOST, TARGET_PORT))
     print(f"[proxy] Connected upstream to {TARGET_HOST}:{TARGET_PORT}")
 
-    # Two directions: client→server and server→client
     t1 = threading.Thread(
         target=pipe, args=(client_sock, upstream, "c->s"), daemon=True
     )

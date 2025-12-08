@@ -15,11 +15,13 @@ def main():
                 print(f"[server] Connection from {addr}")
                 data = conn.recv(4096)
                 if not data:
-                    print("[server] didnt get anything back")
+                    print("[server] Didnt get anything")
                     continue
-                response = b"server echo: " + data
+
+                print("[server] Confirmed data received:", data)
+                response = b"[server] Confirming sent data: " + data
                 conn.sendall(response)
-                print(f"[server] Responded and closed connection")
+                # print(f"[server] Responded and closed connection")
 
 
 if __name__ == "__main__":
