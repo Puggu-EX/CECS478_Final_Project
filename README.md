@@ -8,3 +8,5 @@ Make sure docker is installed with the ability to run docker-compose. That shoul
 ```
 docker-compose up --build
 ```
+# Architecture Overview
+# Video
