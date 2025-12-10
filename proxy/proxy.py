@@ -13,17 +13,63 @@ MAX_PACKET_SIZE = 50
 
 MAX_RATE = 5 # per second
 
-USER_RATES = {} # "Host@Address": <int>
-
+# Dictionary mapping client addresses to lists of timestamps
+# Format: "host:port": [timestamp1, timestamp2, ...]
+USER_RATES = {}
 
 _log_lock = threading.Lock()
+_rate_lock = threading.Lock()
 
 
-def handle_client_rates():
+def check_rate_limit(client_addr: tuple) -> bool:
     """
-    Handle client rates
-    Sholud be the only thing to access `USER_RATES`
+    Check if client has exceeded rate limit.
+    Returns True if rate limit is exceeded (should block), False otherwise.
+    Uses a sliding window approach - tracks timestamps of messages in the last second.
     """
+    current_time = time.time()
+    addr_key = f"{client_addr[0]}:{client_addr[1]}"
+    
+    with _rate_lock:
+        # Get or create the timestamp list for this client
+        if addr_key not in USER_RATES:
+            USER_RATES[addr_key] = []
+        
+        timestamps = USER_RATES[addr_key]
+        
+        # Remove timestamps older than 1 second (sliding window)
+        timestamps[:] = [ts for ts in timestamps if current_time - ts < 1.0]
+        
+        # Check if rate limit exceeded
+        if len(timestamps) >= MAX_RATE:
+            return True  # Rate limit exceeded
+        
+        # Add current timestamp
+        timestamps.append(current_time)
+        return False  # Within rate limit
+
+
+def cleanup_old_entries():
+    """
+    Periodically clean up old entries from USER_RATES dictionary.
+    This runs in a background thread to prevent memory leaks.
+    """
+    while True:
+        time.sleep(10)  # Run cleanup every 10 seconds
+        current_time = time.time()
+        
+        with _rate_lock:
+            # Remove entries that haven't been active in the last 60 seconds
+            keys_to_remove = []
+            for addr_key, timestamps in USER_RATES.items():
+                # Remove old timestamps
+                timestamps[:] = [ts for ts in timestamps if current_time - ts < 1.0]
+                # If no recent activity, mark for removal
+                if not timestamps or (timestamps and current_time - max(timestamps) > 60):
+                    keys_to_remove.append(addr_key)
+            
+            for key in keys_to_remove:
+                del USER_RATES[key]
 
 
 def log_packet(label: str, data: bytes):
@@ -65,10 +111,29 @@ def client_pipe(src, src_addr, dst, label):
                 # remote side closed
                 break
 
+            # Check rate limiting
+            if check_rate_limit(src_addr):
+                print(f"[proxy] Rate limit exceeded for {src_addr}")
+                # Send rate limit message back to client instead of forwarding
+                rate_limit_msg = "[proxy] You are being rate limited\n"
+                try:
+                    src.sendall(rate_limit_msg.encode())
+                except (OSError, BrokenPipeError):
+                    print(f"[proxy] Failed to send rate limit message to {src_addr}")
+                # Don't forward the packet, but keep connection alive
+                continue
+
             logged = log_packet(label, data)
             if logged:
-                raise ValueError
-
+                print(f"[proxy] Malicious packet detected from {src_addr} (size: {len(data)})")
+                # Send malicious message notification back to client instead of forwarding
+                malicious_msg = "[proxy] A malicious message was sent, it was not delivered.\n"
+                try:
+                    src.sendall(malicious_msg.encode())
+                except (OSError, BrokenPipeError):
+                    print(f"[proxy] Failed to send malicious message notification to {src_addr}")
+                # Don't forward the packet, but keep connection alive
+                continue
 
             dst.sendall(data) # Forward packet
 
@@ -136,12 +201,6 @@ def handle_client(client_sock, client_addr):
         target=server_pipe, args=(server_socket, client_sock, "s->c"), daemon=True
     )
 
-    # Handles client rate limiting
-    time.gmtime()
-    t3 = threading.Thread(
-        target=handle_client_rates, args=(), daemon=True
-    )
-
     t1.start()
     t2.start()
 
@@ -150,6 +209,10 @@ def main():
     """
     Main function
     """
+    # Start background thread for cleaning up old rate limit entries
+    cleanup_thread = threading.Thread(target=cleanup_old_entries, daemon=True)
+    cleanup_thread.start()
+    
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((LISTEN_HOST, LISTEN_PORT))

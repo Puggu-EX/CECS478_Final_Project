@@ -14,5 +14,7 @@ services:
   client:
     build: ./client
     container_name: fp_client
+    stdin_open: true  # Allow stdin
+    tty: true         # Allocate a pseudo-TTY
     depends_on:
       - proxy

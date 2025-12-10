@@ -64,7 +64,7 @@ def main():
 
         while True:
             conn, addr = s.accept()
-            time.sleep(1)
+            # time.sleep(1)
             handle_client(conn, addr)
 
 
