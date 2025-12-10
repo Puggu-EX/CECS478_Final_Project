@@ -55,7 +55,7 @@ def client_pipe(src, src_addr, dst, label):
     Keep the connection alive while safe data is being sent
     Close the connection if the client sends:
         ... a suspiciously large packet 
-        ... too many packets
+        ... too many packets within a given time frame
         ... a packet with a suspicious payload
     """
     try:
@@ -126,12 +126,22 @@ def handle_client(client_sock, client_addr):
     server_socket.connect((TARGET_HOST, TARGET_PORT))
     print(f"[proxy] Connected server to {TARGET_HOST}:{TARGET_PORT}")
 
+    # Handles client to server communication
     t1 = threading.Thread(
         target=client_pipe, args=(client_sock, client_addr, server_socket, "c->s"), daemon=True
     )
+
+    # Handles server to client communication
     t2 = threading.Thread(
         target=server_pipe, args=(server_socket, client_sock, "s->c"), daemon=True
     )
+
+    # Handles client rate limiting
+    time.gmtime()
+    t3 = threading.Thread(
+        target=handle_client_rates, args=(), daemon=True
+    )
+
     t1.start()
     t2.start()
 
