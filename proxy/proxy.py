@@ -1,6 +1,7 @@
 import socket
 import threading
 import time
+import re
 
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8000
@@ -86,6 +87,152 @@ def cleanup_old_entries():
                 # Also clean up warnings for inactive clients
                 if key in USER_WARNING:
                     del USER_WARNING[key]
+
+
+def detect_http_request(data: bytes) -> bool:
+    """
+    Detect if packet contains an HTTP request.
+    Looks for HTTP methods followed by paths/versions, or HTTP headers.
+    More strict to avoid false positives on normal text.
+    """
+    try:
+        text = data.decode('utf-8', errors='ignore').strip()
+        text_upper = text.upper()
+        lines = text.split('\n')
+        first_line = lines[0].strip() if lines else ""
+        first_line_upper = first_line.upper()
+        
+        # HTTP methods that must be followed by a path or HTTP version
+        http_methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'CONNECT', 'TRACE']
+        
+        # Check for HTTP methods at the start, but require they're followed by a path or HTTP version
+        for method in http_methods:
+            if first_line_upper.startswith(method + ' '):
+                # Method found - check if followed by valid HTTP request pattern
+                # Should have: METHOD /path HTTP/version OR METHOD http://host/path
+                remaining = first_line[len(method):].strip()
+                
+                # Check for HTTP version (strong indicator)
+                if 'HTTP/1.' in remaining.upper() or 'HTTP/2' in remaining.upper():
+                    return True
+                
+                # Check for URL pattern (http:// or https://)
+                if remaining.upper().startswith('HTTP://') or remaining.upper().startswith('HTTPS://'):
+                    return True
+                
+                # Check for path starting with / (common HTTP request pattern)
+                if remaining.startswith('/'):
+                    return True
+                
+                # If method is followed by something that looks like a path/URL, it's likely HTTP
+                # But be more strict - require at least HTTP version or multiple headers
+                # Don't flag just "GET something" as it could be normal text
+        
+        # Check for HTTP version indicator (must be with a method or in proper context)
+        if 'HTTP/1.' in text_upper or 'HTTP/2' in text_upper:
+            # If HTTP version is present, check if it's in a request line context
+            # Look for pattern like "GET /path HTTP/1.1" or "POST /path HTTP/2"
+            import re
+            http_version_pattern = r'HTTP/[12]\.?\d?'
+            if re.search(http_version_pattern, text_upper):
+                # Check if there's a method before it
+                for method in http_methods:
+                    method_pos = text_upper.find(method + ' ')
+                    http_pos = text_upper.find('HTTP/')
+                    if method_pos != -1 and http_pos != -1 and method_pos < http_pos:
+                        return True
+        
+        # Check for multiple HTTP headers (stronger indicator than single header)
+        http_headers = [
+            'HOST:', 'USER-AGENT:', 'CONTENT-TYPE:', 'CONTENT-LENGTH:',
+            'ACCEPT:', 'AUTHORIZATION:', 'COOKIE:', 'REFERER:',
+            'ORIGIN:', 'X-REQUESTED-WITH:', 'ACCEPT-LANGUAGE:',
+            'CONNECTION:', 'CACHE-CONTROL:', 'ACCEPT-ENCODING:'
+        ]
+        
+        header_count = 0
+        for line in lines:
+            line_upper = line.strip().upper()
+            for header in http_headers:
+                # Header must be at start of line (with optional whitespace)
+                if line_upper.startswith(header) or line_upper.startswith(header.replace(':', '')):
+                    header_count += 1
+                    break
+        
+        # Multiple headers strongly suggest HTTP request
+        if header_count >= 2:
+            return True
+        
+        # Single header + method is also a strong indicator
+        if header_count >= 1:
+            for method in http_methods:
+                if method + ' ' in first_line_upper:
+                    return True
+        
+        return False
+    except:
+        return False
+
+
+def detect_code(data: bytes) -> bool:
+    """
+    Detect if packet contains code patterns.
+    Looks for code keywords and syntax patterns, but avoids false positives on normal text.
+    """
+    try:
+        text = data.decode('utf-8', errors='ignore')
+        
+        # Code keywords that are less likely to appear in normal text
+        code_keywords = [
+            'function(', 'function ', 'def ', 'class ', 'import ', 'from ',
+            'var ', 'let ', 'const ', 'return ', 'async ', 'await ',
+            'public ', 'private ', 'protected ', 'static ', 'void ',
+            'int ', 'string ', 'boolean ', 'float ', 'double ',
+            '<?php', '<?=', '<?', '#!/', '#include', '#define',
+            'SELECT ', 'INSERT ', 'UPDATE ', 'DELETE ', 'FROM ',
+            'console.log', 'print(', 'System.out', 'printf(',
+        ]
+        
+        text_lower = text.lower()
+        keyword_count = 0
+        
+        for keyword in code_keywords:
+            if keyword.lower() in text_lower:
+                keyword_count += 1
+        
+        # Multiple code keywords suggest actual code
+        if keyword_count >= 2:
+            return True
+        
+        # Check for code-like patterns
+        # Multiple semicolons (common in code)
+        if text.count(';') >= 2:
+            return True
+        
+        # Multiple curly braces (common in code)
+        if (text.count('{') >= 2 or text.count('}') >= 2) and keyword_count >= 1:
+            return True
+        
+        # Multiple brackets with code-like structure
+        if (text.count('[') >= 2 and text.count(']') >= 2) and keyword_count >= 1:
+            return True
+        
+        # Assignment operators common in code
+        assignment_ops = [' = ', ' += ', ' -= ', ' *= ', ' /= ', ' := ']
+        assignment_count = sum(1 for op in assignment_ops if op in text)
+        if assignment_count >= 2:
+            return True
+        
+        # Function call patterns: word followed by (
+        import re
+        function_pattern = r'\b\w+\s*\('
+        function_calls = len(re.findall(function_pattern, text))
+        if function_calls >= 3:  # Multiple function calls suggest code
+            return True
+        
+        return False
+    except:
+        return False
 
 
 def log_packet(label: str, data: bytes):
@@ -177,6 +324,33 @@ def client_pipe(src, src_addr, dst, label):
                         break
                 except (OSError, BrokenPipeError):
                     print(f"[proxy] Failed to send rate limit message to {src_addr}")
+                # Don't forward the packet, but keep connection alive
+                continue
+
+            # Check for code or HTTP requests
+            is_http = detect_http_request(data)
+            is_code = detect_code(data)
+            
+            if is_http or is_code:
+                warning_count = increment_warning(addr_key)
+                
+                violation_type = "HTTP request" if is_http else "code"
+                print(f"[proxy] {violation_type} detected from {src_addr} (Warning: {warning_count})")
+                # Send violation message back to client instead of forwarding
+                violation_msg = f"[proxy] Warning! {violation_type.capitalize()} detected, it was not delivered: {warning_count}/{MAX_WARNINGS}\n"
+                
+                # Check if the user exceeded the number of warnings, if so shutdown
+                if warning_count > MAX_WARNINGS:
+                    shutdown_client = True
+                    violation_msg = "[proxy] You exceeded the warning limit too many times. Connection closed.\n"
+                
+                try:
+                    src.sendall(violation_msg.encode())
+                    if shutdown_client:
+                        shutdown(src, dst)
+                        break
+                except (OSError, BrokenPipeError):
+                    print(f"[proxy] Failed to send {violation_type} violation message to {src_addr}")
                 # Don't forward the packet, but keep connection alive
                 continue
 

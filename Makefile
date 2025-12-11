@@ -6,6 +6,4 @@ kill:
 	docker-compose kill
 clean:
 	docker-compose down
-	rm ./proxy/logs/log.txt
-	ni ./proxy/logs/log.txt
 

@@ -11,6 +11,8 @@ PROXY_PORT = 8000
 send_message_flag = threading.Event()
 send_malicious_flag = False  # Flag to send malicious message
 send_test_flag = False  # Flag to send test message
+send_custom_flag = False  # Flag to send custom message
+custom_message = ""  # Store custom message
 connection_closed = False
 connection_lock = threading.Lock()
 
@@ -33,13 +35,13 @@ def wait_for_input(sock):
     Wait for user input (Enter key) to trigger message sending
     Works reliably in Docker containers
     """
-    global connection_closed, send_malicious_flag, send_test_flag
+    global connection_closed, send_malicious_flag, send_test_flag, send_custom_flag, custom_message
 
     # Wait a moment for the container to fully start and allow attachment
     time.sleep(2)
 
     print(
-        "[client] Press ENTER to send a message, 'm' + ENTER for malicious message, 't' + ENTER for test packets, or 'q' + ENTER to quit",
+        "[client] Press ENTER to send a message, 'm' + ENTER for malicious message, 't' + ENTER for test packets, 'c' + ENTER for custom query, or 'q' + ENTER to quit",
         flush=True,
     )
 
@@ -68,12 +70,28 @@ def wait_for_input(sock):
                 with connection_lock:
                     send_test_flag = True
                     send_malicious_flag = False
+                    send_custom_flag = False
                 send_message_flag.set()
+            elif user_input.lower() == "c":
+                # Prompt for custom message
+                print("[client] Enter your custom message:", flush=True)
+                try:
+                    custom_input = input().strip()
+                    with connection_lock:
+                        custom_message = custom_input
+                        send_custom_flag = True
+                        send_malicious_flag = False
+                        send_test_flag = False
+                    send_message_flag.set()
+                except (EOFError, OSError, KeyboardInterrupt):
+                    print("[client] Failed to read custom message", flush=True)
+                    continue
             else:
                 # Any other input (including just Enter) sends a normal message
                 with connection_lock:
                     send_malicious_flag = False
                     send_test_flag = False
+                    send_custom_flag = False
                 send_message_flag.set()
 
         except (EOFError, OSError, KeyboardInterrupt):
@@ -88,7 +106,7 @@ def wait_for_input(sock):
 
 
 def main():
-    global connection_closed, send_malicious_flag, send_test_flag
+    global connection_closed, send_malicious_flag, send_test_flag, send_custom_flag, custom_message
 
     time.sleep(5)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -112,8 +130,11 @@ def main():
                 with connection_lock:
                     send_malicious = send_malicious_flag
                     send_test = send_test_flag
+                    send_custom = send_custom_flag
+                    custom_msg = custom_message
                     send_malicious_flag = False  # Reset flag
                     send_test_flag = False  # Reset flag
+                    send_custom_flag = False  # Reset flag
 
                 if send_malicious:
                     # Send malicious message
@@ -125,6 +146,10 @@ def main():
                     # Send a random test packet
                     message_to_send = random.choice(TEST_PACKETS)
                     print(f"[client] Sending test packet (size: {len(message_to_send)} bytes)", flush=True)
+                elif send_custom:
+                    # Send custom message
+                    message_to_send = custom_msg
+                    print(f"[client] Sending custom message (size: {len(message_to_send)} bytes)", flush=True)
                 else:
                     # Generate random normal message
                     message_to_send = random.choice(
