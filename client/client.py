@@ -10,8 +10,22 @@ PROXY_PORT = 8000
 # Flag to control message sending
 send_message_flag = threading.Event()
 send_malicious_flag = False  # Flag to send malicious message
+send_test_flag = False  # Flag to send test message
 connection_closed = False
 connection_lock = threading.Lock()
+
+# Test packets to test the filter
+TEST_PACKETS = [
+    "Normal",  # Small normal packet
+    "A" * 50,  # Exactly at the limit (50 bytes)
+    "B" * 51,  # Just over the limit (51 bytes)
+    "C" * 100,  # Large packet (100 bytes)
+    "D" * 200,  # Very large packet (200 bytes)
+    "Test with special chars: !@#$%^&*()",  # Special characters
+    "Test\nwith\nnewlines",  # Newlines in message
+    "",  # Empty message (just newline)
+    "X" * 30 + "\x00" + "Y" * 20,  # Packet with null byte
+]
 
 
 def wait_for_input(sock):
@@ -19,13 +33,13 @@ def wait_for_input(sock):
     Wait for user input (Enter key) to trigger message sending
     Works reliably in Docker containers
     """
-    global connection_closed, send_malicious_flag
+    global connection_closed, send_malicious_flag, send_test_flag
 
     # Wait a moment for the container to fully start and allow attachment
     time.sleep(2)
 
     print(
-        "[client] Press ENTER to send a message, 'm' + ENTER for malicious message, or 'q' + ENTER to quit",
+        "[client] Press ENTER to send a message, 'm' + ENTER for malicious message, 't' + ENTER for test packets, or 'q' + ENTER to quit",
         flush=True,
     )
 
@@ -47,11 +61,19 @@ def wait_for_input(sock):
                 # Set flag to send malicious message
                 with connection_lock:
                     send_malicious_flag = True
+                    send_test_flag = False
+                send_message_flag.set()
+            elif user_input.lower() == "t":
+                # Set flag to send test message
+                with connection_lock:
+                    send_test_flag = True
+                    send_malicious_flag = False
                 send_message_flag.set()
             else:
                 # Any other input (including just Enter) sends a normal message
                 with connection_lock:
                     send_malicious_flag = False
+                    send_test_flag = False
                 send_message_flag.set()
 
         except (EOFError, OSError, KeyboardInterrupt):
@@ -66,7 +88,7 @@ def wait_for_input(sock):
 
 
 def main():
-    global connection_closed, send_malicious_flag
+    global connection_closed, send_malicious_flag, send_test_flag
 
     time.sleep(5)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -86,10 +108,12 @@ def main():
             if send_message_flag.wait(timeout=0.1):
                 send_message_flag.clear()
 
-                # Check if malicious message should be sent
+                # Check what type of message should be sent
                 with connection_lock:
                     send_malicious = send_malicious_flag
+                    send_test = send_test_flag
                     send_malicious_flag = False  # Reset flag
+                    send_test_flag = False  # Reset flag
 
                 if send_malicious:
                     # Send malicious message
@@ -97,6 +121,10 @@ def main():
                         "This is a malicous message! You can tell by the odd size!"
                     )
                     message_to_send = malicious_msg
+                elif send_test:
+                    # Send a random test packet
+                    message_to_send = random.choice(TEST_PACKETS)
+                    print(f"[client] Sending test packet (size: {len(message_to_send)} bytes)", flush=True)
                 else:
                     # Generate random normal message
                     message_to_send = random.choice(

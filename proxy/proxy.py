@@ -65,7 +65,7 @@ def check_rate_limit(client_addr: tuple) -> bool:
 
 def cleanup_old_entries():
     """
-    Periodically clean up old entries from USER_RATES dictionary.
+    Periodically clean up old entries from USER_RATES and USER_WARNING dictionaries.
     This runs in a background thread to prevent memory leaks.
     """
     while True:
@@ -81,7 +81,11 @@ def cleanup_old_entries():
                 if not timestamps or (timestamps and current_time - max(timestamps) > 60):
                     keys_to_remove.append(addr_key)
             for key in keys_to_remove:
-                del USER_RATES[key]
+                if key in USER_RATES:
+                    del USER_RATES[key]
+                # Also clean up warnings for inactive clients
+                if key in USER_WARNING:
+                    del USER_WARNING[key]
 
 
 def log_packet(label: str, data: bytes):
@@ -107,6 +111,27 @@ def log_packet(label: str, data: bytes):
 
 
 
+def increment_warning(addr_key: str) -> int:
+    """
+    Increment warning count for a client and return the new count.
+    Thread-safe.
+    """
+    with _rate_lock:
+        if addr_key not in USER_WARNING:
+            USER_WARNING[addr_key] = 0
+        USER_WARNING[addr_key] += 1
+        return USER_WARNING[addr_key]
+
+
+def get_warning_count(addr_key: str) -> int:
+    """
+    Get current warning count for a client.
+    Thread-safe.
+    """
+    with _rate_lock:
+        return USER_WARNING.get(addr_key, 0)
+
+
 def client_pipe(src, src_addr, dst, label):
     """
     Fucntion for client thread
@@ -116,33 +141,40 @@ def client_pipe(src, src_addr, dst, label):
         ... too many packets within a given time frame
         ... a packet with a suspicious payload
     """
+    addr_key = f"{src_addr[0]}:{src_addr[1]}"
+    
     try:
-        USER_WARNING[src_addr] = 0
+        # Initialize warning count for this client
+        with _rate_lock:
+            if addr_key not in USER_WARNING:
+                USER_WARNING[addr_key] = 0
+        
         while True:
             data = src.recv(4096)
             if not data:
                 # remote side closed
                 break
 
+            shutdown_client = False
+
             # Check rate limiting
             if check_rate_limit(src_addr):
-                shutdown_client = False
-                USER_WARNING[src_addr]+=1
+                warning_count = increment_warning(addr_key)
 
-                print(f"[proxy] Rate limit exceeded for {src_addr}")
+                print(f"[proxy] Rate limit exceeded for {src_addr} (Warning: {warning_count})")
                 # Send rate limit message back to client instead of forwarding
-                rate_limit_msg = f"[proxy] Warning! You are being rate limited: {USER_WARNING[src_addr]}\n"
+                rate_limit_msg = f"[proxy] Warning! You are being rate limited: {warning_count}/{MAX_WARNINGS}\n"
 
                 # Check if the user exceeded the number of warnings, if so shutdown
-                if USER_WARNING[src_addr] > MAX_WARNINGS:
+                if warning_count > MAX_WARNINGS:
                     shutdown_client = True
-                    rate_limit_msg = "[proxy] You exceeded the rate limit too many times\n"
-
+                    rate_limit_msg = "[proxy] You exceeded the warning limit too many times. Connection closed.\n"
 
                 try:
                     src.sendall(rate_limit_msg.encode())
                     if shutdown_client:
                         shutdown(src, dst)
+                        break
                 except (OSError, BrokenPipeError):
                     print(f"[proxy] Failed to send rate limit message to {src_addr}")
                 # Don't forward the packet, but keep connection alive
@@ -150,11 +182,22 @@ def client_pipe(src, src_addr, dst, label):
 
             logged = log_packet(label, data)
             if logged:
-                print(f"[proxy] Malicious packet detected from {src_addr} (size: {len(data)})")
+                warning_count = increment_warning(addr_key)
+                
+                print(f"[proxy] Malicious packet detected from {src_addr} (size: {len(data)}, Warning: {warning_count})")
                 # Send malicious message notification back to client instead of forwarding
-                malicious_msg = "[proxy] A malicious message was sent, it was not delivered.\n"
+                malicious_msg = f"[proxy] Warning! A malicious message was sent, it was not delivered: {warning_count}/{MAX_WARNINGS}\n"
+                
+                # Check if the user exceeded the number of warnings, if so shutdown
+                if warning_count > MAX_WARNINGS:
+                    shutdown_client = True
+                    malicious_msg = "[proxy] You exceeded the warning limit too many times. Connection closed.\n"
+                
                 try:
                     src.sendall(malicious_msg.encode())
+                    if shutdown_client:
+                        shutdown(src, dst)
+                        break
                 except (OSError, BrokenPipeError):
                     print(f"[proxy] Failed to send malicious message notification to {src_addr}")
                 # Don't forward the packet, but keep connection alive
