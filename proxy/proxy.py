@@ -12,13 +12,27 @@ LOG_FILE = "/logs/log.txt"
 MAX_PACKET_SIZE = 50
 
 MAX_RATE = 5 # per second
+MAX_WARNINGS = 3
 
 # Dictionary mapping client addresses to lists of timestamps
 # Format: "host:port": [timestamp1, timestamp2, ...]
 USER_RATES = {}
+USER_WARNING = {}
 
 _log_lock = threading.Lock()
 _rate_lock = threading.Lock()
+
+def shutdown(src, dst):
+    try:
+        src.shutdown(socket.SHUT_RD)
+    except OSError:
+        pass
+    try:
+        dst.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+    src.close()
+    dst.close()
 
 
 def check_rate_limit(client_addr: tuple) -> bool:
@@ -57,7 +71,6 @@ def cleanup_old_entries():
     while True:
         time.sleep(10)  # Run cleanup every 10 seconds
         current_time = time.time()
-        
         with _rate_lock:
             # Remove entries that haven't been active in the last 60 seconds
             keys_to_remove = []
@@ -67,7 +80,6 @@ def cleanup_old_entries():
                 # If no recent activity, mark for removal
                 if not timestamps or (timestamps and current_time - max(timestamps) > 60):
                     keys_to_remove.append(addr_key)
-            
             for key in keys_to_remove:
                 del USER_RATES[key]
 
@@ -105,6 +117,7 @@ def client_pipe(src, src_addr, dst, label):
         ... a packet with a suspicious payload
     """
     try:
+        USER_WARNING[src_addr] = 0
         while True:
             data = src.recv(4096)
             if not data:
@@ -113,11 +126,23 @@ def client_pipe(src, src_addr, dst, label):
 
             # Check rate limiting
             if check_rate_limit(src_addr):
+                shutdown_client = False
+                USER_WARNING[src_addr]+=1
+
                 print(f"[proxy] Rate limit exceeded for {src_addr}")
                 # Send rate limit message back to client instead of forwarding
-                rate_limit_msg = "[proxy] You are being rate limited\n"
+                rate_limit_msg = f"[proxy] Warning! You are being rate limited: {USER_WARNING[src_addr]}\n"
+
+                # Check if the user exceeded the number of warnings, if so shutdown
+                if USER_WARNING[src_addr] > MAX_WARNINGS:
+                    shutdown_client = True
+                    rate_limit_msg = "[proxy] You exceeded the rate limit too many times\n"
+
+
                 try:
                     src.sendall(rate_limit_msg.encode())
+                    if shutdown_client:
+                        shutdown(src, dst)
                 except (OSError, BrokenPipeError):
                     print(f"[proxy] Failed to send rate limit message to {src_addr}")
                 # Don't forward the packet, but keep connection alive

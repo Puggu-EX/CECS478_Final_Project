@@ -20,27 +20,30 @@ def wait_for_input(sock):
     Works reliably in Docker containers
     """
     global connection_closed, send_malicious_flag
-    
+
     # Wait a moment for the container to fully start and allow attachment
     time.sleep(2)
-    
-    print("[client] Press ENTER to send a message, 'm' + ENTER for malicious message, or 'q' + ENTER to quit", flush=True)
-    
+
+    print(
+        "[client] Press ENTER to send a message, 'm' + ENTER for malicious message, or 'q' + ENTER to quit",
+        flush=True,
+    )
+
     while True:
         with connection_lock:
             if connection_closed:
                 break
-        
+
         try:
             # Use input() which works reliably in Docker with stdin_open and tty
             user_input = input().strip()
-            
-            if user_input.lower() == 'q':
+
+            if user_input.lower() == "q":
                 print("[client] Quitting...", flush=True)
                 with connection_lock:
                     connection_closed = True
                 break
-            elif user_input.lower() == 'm':
+            elif user_input.lower() == "m":
                 # Set flag to send malicious message
                 with connection_lock:
                     send_malicious_flag = True
@@ -50,7 +53,7 @@ def wait_for_input(sock):
                 with connection_lock:
                     send_malicious_flag = False
                 send_message_flag.set()
-                
+
         except (EOFError, OSError, KeyboardInterrupt):
             # stdin not available or interrupted
             with connection_lock:
@@ -64,7 +67,7 @@ def wait_for_input(sock):
 
 def main():
     global connection_closed, send_malicious_flag
-    
+
     time.sleep(5)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((PROXY_HOST, PROXY_PORT))
@@ -78,19 +81,21 @@ def main():
             with connection_lock:
                 if connection_closed:
                     break
-            
+
             # Wait for input (or timeout to check connection status)
             if send_message_flag.wait(timeout=0.1):
                 send_message_flag.clear()
-                
+
                 # Check if malicious message should be sent
                 with connection_lock:
                     send_malicious = send_malicious_flag
                     send_malicious_flag = False  # Reset flag
-                
+
                 if send_malicious:
                     # Send malicious message
-                    malicious_msg = "This is a malicous message! You can tell by the odd size!"
+                    malicious_msg = (
+                        "This is a malicous message! You can tell by the odd size!"
+                    )
                     message_to_send = malicious_msg
                 else:
                     # Generate random normal message
@@ -102,7 +107,7 @@ def main():
                             "Hi!",
                         ]
                     )
-                
+
                 try:
                     s.sendall(f"{message_to_send}\n".encode())
                     print(f"[client] Sent: {message_to_send}", flush=True)
@@ -127,7 +132,7 @@ def main():
                 break
             finally:
                 s.settimeout(None)  # Reset to blocking mode
-        
+
         with connection_lock:
             connection_closed = True
 

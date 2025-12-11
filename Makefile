@@ -1,7 +1,11 @@
 up:
-	docker-compose build
+	docker-compose up -d --build
 demo:
-	docker-compose up
+	docker attach fp_client
+kill:
+	docker-compose kill
 clean:
 	docker-compose down
+	rm ./proxy/logs/log.txt
+	ni ./proxy/logs/log.txt
 
